@@ -10,11 +10,12 @@ import { useTheme } from '@/hooks/useTheme';
 import z from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
-import { useGetWhatsappConfigQuery, useSaveWhatsAppConfigMutation, useStatusWhatsAppConfigQuery, useTestWhatsAppConfigQuery, useUpdateAccessTokenMutation, useUpdateWhatsappAccountMutation } from '@/hooks/useWhatsappConfigQuery';
+import { useGetOnboardingConfigQuery, useGetWhatsappConfigQuery, useSaveWhatsAppConfigMutation, useStatusWhatsAppConfigQuery, useTestWhatsAppConfigQuery, useUpdateAccessTokenMutation, useUpdateWhatsappAccountMutation } from '@/hooks/useWhatsappConfigQuery';
 import { WhatsappConnectionList } from './whatsappConnectionList';
 import { TestMessageCard } from './testMessageCard';
 import { MetaVerificationCard } from './metaVerificationCard';
 import { MetaSetupGuide } from './metaSetupGuide';
+import { EmbeddedSignupCard } from './embeddedSignupCard';
 import { WhatsAppFlowStepper } from './whatsappFlowStepper';
 import { getWebhookBaseURL } from '@/helper/axios';
 import { useAuth } from '@/redux/selectors/auth/authSelector';
@@ -81,6 +82,16 @@ export const WhatsAppConnectionView = () => {
     const { mutate: updateAccessTokenMutate, isPending: isTokenUpdateLoading } = useUpdateAccessTokenMutation();
     const { mutate: updateWhatsappAccountMutate, isPending: isAccountUpdateLoading } = useUpdateWhatsappAccountMutation();
     const { isDarkMode } = useTheme();
+    // Embedded Signup options are server-approved per organization. Null / all-false => the existing manual-only page.
+    const { data: onboardingConfig } = useGetOnboardingConfigQuery();
+    const embeddedMethods = onboardingConfig?.methods;
+    const hasEmbeddedMethod = !!(embeddedMethods?.standard || embeddedMethods?.coexistence);
+    const showEmbeddedSignup = !WhatsAppConnectionData?.data?.id && hasEmbeddedMethod;
+    // Existing manual (LEGACY) connection: only an explicit, user-initiated option — never automatic.
+    const showEmbeddedSwitch =
+        !!WhatsAppConnectionData?.data?.id &&
+        WhatsAppConnectionData?.data?.whatsapp_connection_type === 'LEGACY_MANUAL' &&
+        hasEmbeddedMethod;
 
     const [organization, setOrganization] = useState<Organization | null>(null);
     const [isCheckingWebhook, setIsCheckingWebhook] = useState(false);
@@ -309,6 +320,10 @@ export const WhatsAppConnectionView = () => {
                                     isAdmin={isAdmin}
                                 />
 
+                                {showEmbeddedSwitch && embeddedMethods && (
+                                    <EmbeddedSignupCard isDarkMode={isDarkMode} isAdmin={isAdmin} methods={embeddedMethods} existingConnection />
+                                )}
+
                                 {/* Test MessageCard - Show if connection exists */}
                                 {WhatsAppConnectionData?.data?.id && (
                                     <TestMessageCard
@@ -319,6 +334,10 @@ export const WhatsAppConnectionView = () => {
                                 )}
                             </div>
                         ) : (
+                            <>
+                            {showEmbeddedSignup && embeddedMethods && (
+                                <EmbeddedSignupCard isDarkMode={isDarkMode} isAdmin={isAdmin} methods={embeddedMethods} />
+                            )}
                             <div className={cn(
                                 "p-8 rounded-xl border backdrop-blur-xl mt-5",
                                 isDarkMode
@@ -437,6 +456,7 @@ export const WhatsAppConnectionView = () => {
                                     </form>
                                 </div>
                             </div>
+                            </>
                         )}
                     </div>
 

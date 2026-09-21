@@ -15,6 +15,7 @@ import { useIndustriesQuery, usePlansQuery } from "@/hooks/useModuleAccessManage
 import { Country, State, City } from 'country-state-city';
 import { sanitizePhoneInput } from "@/lib/phone";
 import { IndustryType } from "./TenantFeatureAccessChecklist";
+import { WhatsappCapabilitiesSection } from "./WhatsappCapabilitiesSection";
 
 type AppointmentBookingType = 'state_machine' | 'ai_agent';
 
@@ -1059,6 +1060,10 @@ export const OrganizationModal = ({
                         </p>
                     </div>
                 </div>
+
+                {mode !== 'create' && organization?.tenant_id && (
+                    <WhatsappCapabilitiesSection tenantId={organization.tenant_id} isDarkMode={isDarkMode} />
+                )}
             </div>
         </Drawer>
     );

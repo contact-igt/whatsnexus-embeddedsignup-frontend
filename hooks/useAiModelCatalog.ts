@@ -112,18 +112,27 @@ export function useAiModelCatalog() {
 }
 
 type Method = "post" | "put";
+
+// The app-wide axios timeout is 15s. These calls talk to OpenAI on the server, so they need longer:
+//   test     – access check (≤25s) + up to 4 sequential model calls (each ≤45s server-side)
+//   activate – re-confirms platform access with OpenAI (≤25s) before switching on
+//   sync     – lists every model from OpenAI (≤30s)
+export const CATALOG_TIMEOUTS_MS = { test: 240_000, activate: 60_000, sync: 90_000 } as const;
+
 function useCatalogMutation() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: ({ path, data, method = "post" }: { path: string; data?: unknown; method?: Method }) =>
-      _axios(method, `/management/ai-model-catalog${path}`, data),
-    onSuccess: () => CATALOG_KEYS.forEach((key) => client.invalidateQueries({ queryKey: [key] })),
+    mutationFn: ({ path, data, method = "post", timeoutMs }: { path: string; data?: unknown; method?: Method; timeoutMs?: number }) =>
+      _axios(method, `/management/ai-model-catalog${path}`, data, "application/json", undefined, timeoutMs ? { timeout: timeoutMs } : {}),
+    // onSettled (not onSuccess): if the browser gives up first the server may still have finished,
+    // so always refresh — the list then shows the real outcome instead of a stale row.
+    onSettled: () => CATALOG_KEYS.forEach((key) => client.invalidateQueries({ queryKey: [key] })),
   });
 }
 
 export function useCatalogSync() {
   const m = useCatalogMutation();
-  return { ...m, sync: () => m.mutateAsync({ path: "/sync" }) };
+  return { ...m, sync: () => m.mutateAsync({ path: "/sync", timeoutMs: CATALOG_TIMEOUTS_MS.sync }) };
 }
 export function useCatalogReview() {
   const m = useCatalogMutation();
@@ -138,14 +147,15 @@ export function useCatalogTest() {
   return {
     ...m,
     test: (id: number, body: { credentialScope: "platform" | "tenant"; tenantId?: string }) =>
-      m.mutateAsync({ path: `/${id}/test`, data: body }),
+      m.mutateAsync({ path: `/${id}/test`, data: body, timeoutMs: CATALOG_TIMEOUTS_MS.test }),
   };
 }
 export function useCatalogActivation() {
   const m = useCatalogMutation();
   return {
     ...m,
-    setActive: (id: number, active: boolean) => m.mutateAsync({ path: `/${id}/${active ? "activate" : "deactivate"}` }),
+    setActive: (id: number, active: boolean) =>
+      m.mutateAsync({ path: `/${id}/${active ? "activate" : "deactivate"}`, timeoutMs: CATALOG_TIMEOUTS_MS.activate }),
   };
 }
 

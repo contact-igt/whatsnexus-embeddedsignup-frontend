@@ -489,8 +489,15 @@ export const _axios = async (
     ...requestConfig,
   };
 
+  // Embedded Signup calls carry a single-use Meta authorization code: never auto-retry
+  // them (a replay would fail and mask the real error) and never log their request body.
+  const isSensitiveEndpoint = endpoint.includes("/embedded-signup/");
+
   try {
-    const res = await requestWithRetry(axiosConfig);
+    // Also never auto-retry writes to the AI model catalog: a compatibility test makes real,
+    // billable OpenAI calls, and activation switches a model on for every tenant.
+    const isCatalogWrite = endpoint.includes("/ai-model-catalog") && String(method).toLowerCase() !== "get";
+    const res = await requestWithRetry(axiosConfig, isSensitiveEndpoint || isCatalogWrite ? 0 : DEFAULT_MAX_RETRIES);
     return res.data;
   } catch (err: any) {
     const normalized = normalizeAxiosError(err, endpoint);
@@ -548,9 +555,9 @@ export const _axios = async (
         online: typeof navigator !== "undefined" ? navigator.onLine : undefined,
         response: err?.response?.data,
         responseHeaders: err?.response?.headers,
-        request: err?.request,
+        request: isSensitiveEndpoint ? undefined : err?.request,
         errorJSON: typeof err?.toJSON === "function" ? err.toJSON() : undefined,
-        config: err?.config,
+        config: isSensitiveEndpoint ? undefined : err?.config,
         normalized,
       });
     }

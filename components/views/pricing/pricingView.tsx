@@ -81,6 +81,11 @@ export const PricingView = () => {
     const [selectedAiRule, setSelectedAiRule] = useState<any>(null);
     const [aiErrors, setAiErrors] = useState<Record<string, string>>({});
 
+    // The pricing API returns raw rows, so a MySQL TINYINT(1) arrives as 0/1 — not true/false.
+    // `rule.is_active !== false` is therefore TRUE for an inactive (0) rule.
+    const isRuleActive = (rule: { is_active?: unknown } | null | undefined): boolean =>
+        rule?.is_active === true || rule?.is_active === 1 || rule?.is_active === "1";
+
     const emptyAiForm = {
         model: "",
         description: "",
@@ -131,7 +136,7 @@ export const PricingView = () => {
         if (!aiFormData.output_rate?.trim()) e.output_rate = "Output rate is required";
         else if (isNaN(parseFloat(aiFormData.output_rate)) || parseFloat(aiFormData.output_rate) < 0) e.output_rate = "Enter a valid positive number";
         const cachedRate = aiFormData.cached_input_price_per_million?.trim();
-        if (isEdit && selectedAiRule?.is_active && aiFormData.is_active !== "false" && !cachedRate) {
+        if (isEdit && isRuleActive(selectedAiRule) && aiFormData.is_active !== "false" && !cachedRate) {
             e.cached_input_price_per_million = "Cached-input rate is required while this model is active";
         }
         if (cachedRate && (isNaN(Number(cachedRate)) || Number(cachedRate) < 0)) {
@@ -184,7 +189,7 @@ export const PricingView = () => {
             markup_percent: parseFloat(aiFormData.markup_percent),
             usd_to_inr_rate: parseFloat(aiFormData.usd_to_inr_rate),
         };
-        if (selectedAiRule.is_active && aiFormData.is_active === "false") data.is_active = false;
+        if (isRuleActive(selectedAiRule) && aiFormData.is_active === "false") data.is_active = false;
         aiUpdateMutation.mutate({ id: selectedAiRule.id, data }, { onSuccess: () => setIsAiEditOpen(false) });
     };
 
@@ -200,7 +205,7 @@ export const PricingView = () => {
             cached_input_price_per_million: rule.cached_input_price_per_million?.toString() || "",
             markup_percent: rule.markup_percent?.toString() || "0",
             usd_to_inr_rate: rule.usd_to_inr_rate?.toString() || String(DEFAULT_USD_TO_INR),
-            is_active: rule.is_active !== false ? "true" : "false",
+            is_active: isRuleActive(rule) ? "true" : "false",
         });
         setAiErrors({});
         setIsAiEditOpen(true);
@@ -1050,7 +1055,7 @@ export const PricingView = () => {
                         value={aiFormData.cached_input_price_per_million}
                         onChange={(e) => handleAiChange("cached_input_price_per_million", e.target.value)}
                         error={aiErrors.cached_input_price_per_million}
-                        required={Boolean(selectedAiRule?.is_active && aiFormData.is_active !== "false")}
+                        required={Boolean(isRuleActive(selectedAiRule) && aiFormData.is_active !== "false")}
                     />
                     <p className={cn("-mt-2 ml-1 text-xs", isDarkMode ? "text-amber-300/80" : "text-amber-700")}>
                         Required while active. Deactivate the model before clearing this rate.
@@ -1077,21 +1082,50 @@ export const PricingView = () => {
                         error={aiErrors.usd_to_inr_rate}
                         required
                     />
-                    <div className="flex items-center justify-between">
-                        <span className={cn("text-sm font-medium", isDarkMode ? "text-white/70" : "text-slate-700")}>Active</span>
-                        <button
-                            type="button"
-                            onClick={() => handleAiChange("is_active", aiFormData.is_active === "true" ? "false" : "true")}
-                            className={cn(
-                                "relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none",
-                                aiFormData.is_active === "true" ? "bg-emerald-600" : isDarkMode ? "bg-white/10" : "bg-slate-200"
-                            )}
-                        >
-                            <span className={cn(
-                                "inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform",
-                                aiFormData.is_active === "true" ? "translate-x-6" : "translate-x-1"
-                            )} />
-                        </button>
+                    {/*
+                      Activation is a guarded action (review + profile + pricing + passing live test) and the
+                      API rejects is_active=true here. So this switch can only DEACTIVATE an active model;
+                      for an inactive model it is shown OFF and locked, with a pointer to the catalog.
+                    */}
+                    <div className="space-y-1.5">
+                        <div className="flex items-center justify-between">
+                            <span className={cn("text-sm font-medium", isDarkMode ? "text-white/70" : "text-slate-700")}>Active</span>
+                            <button
+                                type="button"
+                                role="switch"
+                                aria-checked={aiFormData.is_active === "true"}
+                                aria-label="Model active"
+                                disabled={!isRuleActive(selectedAiRule)}
+                                onClick={() => handleAiChange("is_active", aiFormData.is_active === "true" ? "false" : "true")}
+                                className={cn(
+                                    "relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none",
+                                    aiFormData.is_active === "true" ? "bg-emerald-600" : isDarkMode ? "bg-white/10" : "bg-slate-200",
+                                    !isRuleActive(selectedAiRule) && "opacity-50 cursor-not-allowed"
+                                )}
+                            >
+                                <span className={cn(
+                                    "inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform",
+                                    aiFormData.is_active === "true" ? "translate-x-6" : "translate-x-1"
+                                )} />
+                            </button>
+                        </div>
+                        {isRuleActive(selectedAiRule) ? (
+                            <p className={cn("text-[11px]", isDarkMode ? "text-white/40" : "text-slate-500")}>
+                                Turn this off and save to deactivate the model for all tenants.
+                            </p>
+                        ) : (
+                            <p className={cn("text-[11px]", isDarkMode ? "text-white/40" : "text-slate-500")}>
+                                This model is inactive. Activate it from the{" "}
+                                <button
+                                    type="button"
+                                    className="text-emerald-600 font-semibold hover:underline"
+                                    onClick={() => { setIsAiEditOpen(false); setActiveTab("catalog"); }}
+                                >
+                                    Model Catalog
+                                </button>{" "}
+                                tab after review and a passing compatibility test.
+                            </p>
+                        )}
                     </div>
                 </div>
             </Drawer>

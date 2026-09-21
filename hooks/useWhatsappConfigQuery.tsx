@@ -1,5 +1,5 @@
 import { useAuth } from "@/redux/selectors/auth/authSelector";
-import { whatsappConfigApiData } from "@/services/whatsappConfiguration";
+import { whatsappConfigApiData, OnboardingConfig } from "@/services/whatsappConfiguration";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "@/lib/toast";
 import { useDispatch } from "react-redux";
@@ -148,3 +148,21 @@ export const useStatusWhatsAppConfigQuery = () => {
         }
     })
 }
+
+/**
+ * Which WhatsApp onboarding options this organization may use (Super Admin
+ * controlled). Any failure resolves to "nothing extra" so the existing manual
+ * Settings experience is never blocked or altered by this query.
+ */
+export const useGetOnboardingConfigQuery = () => {
+    const { token, user } = useAuth();
+    const isTenantUser = !!user?.tenant_id && user?.role !== 'super_admin' && user?.role !== 'platform_admin';
+    return useQuery({
+        queryKey: ['whatsapp-onboarding-config', user?.tenant_id],
+        enabled: !!token && isTenantUser,
+        queryFn: () => whatsappConfigApis.getOnboardingConfig(),
+        staleTime: 60 * 1000,
+        retry: false,
+        select: (res): OnboardingConfig | null => res?.data ?? null, // _axios resolves the response body
+    });
+};

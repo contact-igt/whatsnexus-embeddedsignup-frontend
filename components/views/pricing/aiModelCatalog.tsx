@@ -39,6 +39,37 @@ const REVIEW_STATUSES = ["pending", "approved", "unsupported", "retired"];
 const LIFECYCLE_STATUSES = ["unknown", "available", "deprecated", "shutdown"];
 const TEST_STATUSES = ["not_tested", "passed", "failed", "legacy_grandfathered"];
 
+// Plain-language meaning of each catalog state (shown as a tooltip on the state badge).
+const STATE_HELP: Partial<Record<CatalogState, string>> = {
+  "Pending review": "Discovered but not approved yet. Open Review, approve it and add a request profile.",
+  "Unsupported": "Marked unsupported. It cannot be activated.",
+  "Pricing needed": "Approved, but it has no pricing row. Use Pricing to add exact rates (including the cached-input rate).",
+  "Test required": "Approved and priced, but it has not passed a live compatibility test yet. Open Review → Compatibility test and run it (credential scope: platform). A model cannot be activated until a test passes.",
+  "Test failed": "The last live compatibility test failed. Fix the profile or credential in Review and run the test again.",
+  "Ready to activate": "Everything is in place. Click Activate.",
+  "Active": "Live: tenants can use this model.",
+  "Active (legacy — not live-tested)": "Live since before the catalog existed. It keeps running, but run a live test to confirm it.",
+  "Deprecated": "OpenAI has deprecated this model. Plan a replacement.",
+  "Retired": "Retired. It cannot be used.",
+  "Unavailable": "Not currently usable (shut down or blocked). See the note under the model name.",
+};
+
+// Turn a backend blocker into "what is wrong → what to do".
+const BLOCKER_HINTS: Array<[RegExp, string]> = [
+  [/requires approval/i, "Open Review and set Review status to approved."],
+  [/availability is not confirmed/i, "Open Review and set Lifecycle to available (or Refresh models so OpenAI confirms it)."],
+  [/request profile/i, "Open Review and paste a reviewed request profile (JSON)."],
+  [/cached-input|cached input/i, "Click Pricing and enter the verified cached-input rate."],
+  [/pricing|rate/i, "Click Pricing and enter valid, exact rates."],
+  [/live compatibility test/i, "Open Review → Compatibility test and run it with credential scope “platform” (needs the platform OpenAI key)."],
+];
+
+const explainBlockers = (blockers: string[]): string =>
+  ["Cannot activate yet:", ...blockers.map((b, i) => {
+    const hint = BLOCKER_HINTS.find(([re]) => re.test(b))?.[1];
+    return `${i + 1}. ${b}${hint ? ` → ${hint}` : ""}`;
+  })].join("\n");
+
 const errMessage = (e: unknown, fallback: string): string => {
   const withResp = e as { response?: { data?: { message?: string } }; message?: string } | undefined;
   return withResp?.response?.data?.message || withResp?.message || fallback;
@@ -97,7 +128,9 @@ export const AiModelCatalog = ({ isDarkMode, onConfigurePricing }: Props) => {
     setDrawerModel(m);
     setReviewStatus(m.review_status);
     setLifecycleStatus(m.lifecycle_status);
-    setProfileText(JSON.stringify(m.request_profile ?? {}, null, 2));
+    // A model with no reviewed profile starts EMPTY. Seeding "{}" here made every save submit an
+    // invalid empty profile, which the API rejects with a confusing "Unsupported endpoint.".
+    setProfileText(m.request_profile ? JSON.stringify(m.request_profile, null, 2) : "");
     setScope("platform");
     setTestTenantId("");
     setTestOutput("");
@@ -119,13 +152,28 @@ export const AiModelCatalog = ({ isDarkMode, onConfigurePricing }: Props) => {
       try { parsed = JSON.parse(profileText); }
       catch { toast.error("Request profile is not valid JSON."); return; }
     }
+    // An empty object is "no profile", never something to submit.
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && Object.keys(parsed).length === 0) {
+      parsed = undefined;
+    }
+    if (reviewStatus === "approved" && parsed === undefined && !drawerModel.request_profile) {
+      toast.error("Add a reviewed request profile (JSON) before approving this model.");
+      return;
+    }
     try {
       await review.review(drawerModel.id, {
         review_status: reviewStatus,
         lifecycle_status: lifecycleStatus,
         ...(parsed !== undefined ? { request_profile: parsed } : {}),
       });
-      toast.success("Review saved. Compatibility test was reset — run it again before activating.");
+      // Mirror the server rule: only a real profile change invalidates the compatibility test.
+      const profileChanged =
+        parsed !== undefined && JSON.stringify(parsed) !== JSON.stringify(drawerModel.request_profile ?? null);
+      toast.success(
+        profileChanged
+          ? "Review saved. The request profile changed, so the compatibility test was reset — run it again before activating."
+          : "Review saved. Your compatibility test result is unchanged.",
+      );
       setDrawerModel(null);
     } catch (e: unknown) {
       toast.error(errMessage(e, "Could not save review. Check the profile fields."));
@@ -274,7 +322,17 @@ export const AiModelCatalog = ({ isDarkMode, onConfigurePricing }: Props) => {
                     </div>
                   </TableCell>
                   <TableCell align="center">
-                    <Badge isDarkMode={isDarkMode} size="sm" variant={STATE_VARIANT[m.state]}>{m.state}</Badge>
+                    <span
+                      className="inline-flex cursor-help"
+                      title={
+                        STATE_HELP[m.state as CatalogState]
+                        ?? (m.state.startsWith("Active — last test failed")
+                          ? "Still serving tenants, but its most recent live test failed. Investigate, and deactivate it if the failure is real."
+                          : m.state)
+                      }
+                    >
+                      <Badge isDarkMode={isDarkMode} size="sm" variant={STATE_VARIANT[m.state]}>{m.state}</Badge>
+                    </span>
                   </TableCell>
                   <TableCell align="center">
                     <span className={cn("text-xs", isDarkMode ? "text-white/60" : "text-slate-600")}>{m.lifecycle_status}</span>
@@ -300,20 +358,36 @@ export const AiModelCatalog = ({ isDarkMode, onConfigurePricing }: Props) => {
                           className={cn("px-2 py-1 rounded-lg text-xs font-medium border", isDarkMode ? "border-white/10 text-white/80 hover:bg-white/5" : "border-slate-200 text-slate-700 hover:bg-slate-50")}>
                           Pricing
                         </button>
-                        <button
-                          onClick={() => handleActivation(m)}
-                          disabled={busy || (!m.active && m.blockers.length > 0)}
-                          title={m.blockers.length ? m.blockers.join(" ") : m.active ? "Deactivate" : "Activate"}
-                          className={cn(
-                            "px-2 py-1 rounded-lg text-xs font-semibold flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed",
+                        {/*
+                          The tooltip lives on a wrapper, not on the button: browsers (notably Firefox) show no
+                          tooltip on a DISABLED button, which hid the reason. The disabled button ignores the
+                          pointer so the wrapper receives the hover.
+                        */}
+                        <span
+                          className={cn("inline-flex", !m.active && m.blockers.length > 0 && "cursor-not-allowed")}
+                          title={
                             m.active
-                              ? (isDarkMode ? "bg-red-500/15 text-red-300 hover:bg-red-500/25" : "bg-red-50 text-red-700 hover:bg-red-100")
-                              : "bg-emerald-600 text-white hover:bg-emerald-700",
-                          )}
+                              ? "Deactivate this model for all tenants."
+                              : m.blockers.length > 0
+                                ? explainBlockers(m.blockers)
+                                : "Activate this model for all tenants. A passing platform test is re-checked first."
+                          }
                         >
-                          {m.active ? <PowerOff className="w-3.5 h-3.5" /> : <Power className="w-3.5 h-3.5" />}
-                          {m.active ? "Deactivate" : "Activate"}
-                        </button>
+                          <button
+                            onClick={() => handleActivation(m)}
+                            disabled={busy || (!m.active && m.blockers.length > 0)}
+                            aria-label={m.active ? "Deactivate model" : "Activate model"}
+                            className={cn(
+                              "px-2 py-1 rounded-lg text-xs font-semibold flex items-center gap-1 disabled:opacity-40 disabled:pointer-events-none",
+                              m.active
+                                ? (isDarkMode ? "bg-red-500/15 text-red-300 hover:bg-red-500/25" : "bg-red-50 text-red-700 hover:bg-red-100")
+                                : "bg-emerald-600 text-white hover:bg-emerald-700",
+                            )}
+                          >
+                            {m.active ? <PowerOff className="w-3.5 h-3.5" /> : <Power className="w-3.5 h-3.5" />}
+                            {m.active ? "Deactivate" : "Activate"}
+                          </button>
+                        </span>
                       </div>
                     ) : (
                       <span className={cn("text-xs", isDarkMode ? "text-white/40" : "text-slate-400")}>view only</span>
@@ -330,7 +404,7 @@ export const AiModelCatalog = ({ isDarkMode, onConfigurePricing }: Props) => {
         isOpen={!!drawerModel}
         onClose={() => setDrawerModel(null)}
         title={`Review ${drawerModel?.model ?? "model"}`}
-        description="Set review status, lifecycle and the request profile. Saving resets the compatibility test. Activation is a separate action."
+        description="Set review status, lifecycle and the request profile. Changing the request profile resets the compatibility test; changing only the status or lifecycle keeps a passed test. Activation is a separate action."
         isDarkMode={isDarkMode}
         className="font-sans max-w-2xl"
       >
@@ -350,6 +424,7 @@ export const AiModelCatalog = ({ isDarkMode, onConfigurePricing }: Props) => {
                 value={profileText}
                 onChange={(e) => setProfileText(e.target.value)}
                 spellCheck={false}
+                placeholder={'Paste the reviewed request profile as JSON, e.g. {"endpoint":"chat_completions","usageFormat":"chat_completions","modalities":["text"],"purposes":["output"], … }'}
                 className={cn(
                   "w-full min-h-[300px] rounded-xl border p-3 font-mono text-xs outline-none",
                   isDarkMode ? "bg-black/40 border-white/10 text-white" : "bg-white border-slate-200 text-slate-900",
