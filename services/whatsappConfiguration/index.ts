@@ -1,5 +1,8 @@
 import { _axios } from "@/helper/axios";
 
+// shortcut: completion waits on several sequential Meta API calls; move it to async status polling if this can exceed a minute.
+const EMBEDDED_SIGNUP_COMPLETE_TIMEOUT_MS = 60_000;
+
 export interface WhatsappConfigData {
     waba_id: string;
     phone_number_id: string;
@@ -51,7 +54,14 @@ export class whatsappConfigApiData {
     }
 
     completeEmbeddedSignup = async (data: EmbeddedSignupCompletePayload) => {
-        return await _axios("post", `/whatsapp/whatsapp-account/embedded-signup/complete`, data);
+        return await _axios(
+            "post",
+            `/whatsapp/whatsapp-account/embedded-signup/complete`,
+            data,
+            "application/json",
+            undefined,
+            { timeout: EMBEDDED_SIGNUP_COMPLETE_TIMEOUT_MS },
+        );
     }
 }
 
