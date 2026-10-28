@@ -173,7 +173,7 @@ export const useUpdateAutoRechargeSettingsMutation = () => {
  * Tenant-scoped, purpose-specific available AI models.
  * Query key includes tenantId + purpose so Tenant A's list is never served to
  * Tenant B and the input/output/vision lists stay separate. A management caller
- * may pass an explicit tenantId (super_admin / platform_admin only, server-checked).
+ * may pass an explicit tenantId or request the platform-scoped list (server-checked).
  */
 export const useGetAvailableAiModelsQuery = (
     opts: { purpose?: 'input' | 'output' | 'vision'; tenantId?: string; enabled?: boolean } = {},
@@ -185,7 +185,7 @@ export const useGetAvailableAiModelsQuery = (
     return useQuery({
         queryKey: ['available-ai-models', effectiveTenantId ?? 'self', purpose],
         queryFn: () => billingApis.getAvailableAiModels({ purpose, tenantId: opts.tenantId }),
-        enabled: (opts.enabled ?? true) && !!token && (isManagement ? !!opts.tenantId : !!user?.tenant_id),
+        enabled: (opts.enabled ?? true) && !!token && (isManagement || !!user?.tenant_id),
         staleTime: 60 * 1000,
     });
 };
