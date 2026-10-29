@@ -16,6 +16,7 @@ import { TestMessageCard } from './testMessageCard';
 import { MetaVerificationCard } from './metaVerificationCard';
 import { MetaSetupGuide } from './metaSetupGuide';
 import { EmbeddedSignupCard } from './embeddedSignupCard';
+import { EmbeddedConnectionSummary } from './embeddedConnectionSummary';
 import { WhatsAppFlowStepper } from './whatsappFlowStepper';
 import { getWebhookBaseURL } from '@/helper/axios';
 import { useAuth } from '@/redux/selectors/auth/authSelector';
@@ -92,6 +93,8 @@ export const WhatsAppConnectionView = () => {
         !!WhatsAppConnectionData?.data?.id &&
         WhatsAppConnectionData?.data?.whatsapp_connection_type === 'LEGACY_MANUAL' &&
         hasEmbeddedMethod;
+    const isEmbeddedConnection = !!WhatsAppConnectionData?.data?.id &&
+        ['EMBEDDED_STANDARD', 'EMBEDDED_COEXISTENCE'].includes(WhatsAppConnectionData.data.whatsapp_connection_type);
 
     const [organization, setOrganization] = useState<Organization | null>(null);
     const [isCheckingWebhook, setIsCheckingWebhook] = useState(false);
@@ -244,7 +247,7 @@ export const WhatsAppConnectionView = () => {
                                 <span>{WhatsAppConnectionData?.data?.id ? 'Connected' : 'Not Connected'}</span>
                             </div>
 
-                            {isAdmin && (
+                            {isAdmin && !isEmbeddedConnection && (
                                 <button
                                     onClick={handleCheckWebhookStatus}
                                     disabled={isCheckingWebhook || !testConnectionSuccess}
@@ -294,6 +297,24 @@ export const WhatsAppConnectionView = () => {
 
                         {WhatsAppConnectionData?.data?.id ? (
                             <div className="space-y-6">
+                                {isEmbeddedConnection ? (
+                                    <>
+                                        <EmbeddedConnectionSummary
+                                            isDarkMode={isDarkMode}
+                                            account={WhatsAppConnectionData.data}
+                                            health={webhookStatusData}
+                                            checkingHealth={isCheckingWebhook}
+                                            isAdmin={isAdmin}
+                                            onCheckHealth={handleCheckWebhookStatus}
+                                        />
+                                        {embeddedMethods && <EmbeddedSignupCard isDarkMode={isDarkMode} isAdmin={isAdmin} methods={embeddedMethods} existingConnection />}
+                                        <TestMessageCard
+                                            isDarkMode={isDarkMode}
+                                            isActive={WhatsAppConnectionData.data.status === 'active'}
+                                            whatsappNumber={WhatsAppConnectionData.data.whatsapp_number}
+                                        />
+                                    </>
+                                ) : <>
                                 {/* Meta Verification Card - Show only when triggered by user action */}
                                 {showVerification && (
                                     <MetaVerificationCard
@@ -332,6 +353,7 @@ export const WhatsAppConnectionView = () => {
                                         whatsappNumber={WhatsAppConnectionData.data.whatsapp_number}
                                     />
                                 )}
+                                </>}
                             </div>
                         ) : (
                             <>
@@ -460,12 +482,10 @@ export const WhatsAppConnectionView = () => {
                         )}
                     </div>
 
-                    <div className="xl:col-span-1 space-y-6">
-                        <WhatsAppFlowStepper
-                            isDarkMode={isDarkMode}
-                        />
+                    {!isEmbeddedConnection && <div className="xl:col-span-1 space-y-6">
+                        <WhatsAppFlowStepper isDarkMode={isDarkMode} />
                         <MetaSetupGuide isDarkMode={isDarkMode} user={user} />
-                    </div>
+                    </div>}
                 </div>
             </div>
         </div>
