@@ -484,7 +484,7 @@ export const WhatsAppConnectionView = () => {
 
                     {!isEmbeddedConnection && <div className="xl:col-span-1 space-y-6">
                         <WhatsAppFlowStepper isDarkMode={isDarkMode} />
-                        <MetaSetupGuide isDarkMode={isDarkMode} user={user} />
+                        <MetaSetupGuide isDarkMode={isDarkMode} />
                     </div>}
                 </div>
             </div>
